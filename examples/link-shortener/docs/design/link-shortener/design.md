@@ -2,7 +2,7 @@
 title: Self-hosted link shortener
 slug: link-shortener
 kind: greenfield
-status: refining
+status: ready
 builds-on: []
 updated: 2026-10-25
 ---
@@ -264,6 +264,7 @@ One `docker-compose.yml` on the VPS. `docker compose up -d` brings up the whole 
 - [x] **Q6** (minor) Should members be able to choose custom codes? — _area: links_ — settled in Decisions row 11
 - [x] **Q7** (major) Can links be disabled or expire, and what does a visitor see? — _area: links_ — settled in Decisions row 12 and Follow a link
 - [x] **Q8** (minor) How is the GeoLite2 file kept up to date? — _area: ops_ — settled in Deployment (Decisions row 10)
+- [ ] **Q13** (minor) `/healthz` is reachable through the proxy but isn't listed under Access control as public. — _area: auth_
 - [x] **R1** (major) Bots and link-preview crawlers inflate click counts. — _area: analytics_ — mitigation: clicks flagged `is_bot` and excluded from stats by default (areas/analytics.md)
 - [x] **Q9** (blocking) Success criterion 4 is unproven: no deployment description. — _area: ops_ — settled in Deployment
 - [x] **Q10** (minor) Database component row is stale. — _area: ops_ — settled in Components

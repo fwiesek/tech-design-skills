@@ -106,7 +106,7 @@ Entry 0 is the start run (`0. <date> — base design`).
 A design is **ready** when every check passes:
 
 1. No open `blocking` question or risk.
-2. Every success criterion is met by at least one key flow.
+2. Every success criterion is shown to be met by at least one key flow, or by a cross-cutting section for criteria no flow can show (deployment, operations).
 3. Every component appears in at least one key flow or diagram edge.
 4. Every entity in Data has exactly one owner component.
 5. Every Decisions row has a rationale (inline or in its ADR); every ADR lists rejected alternatives.
