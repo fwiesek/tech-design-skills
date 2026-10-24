@@ -2,7 +2,7 @@
 title: Self-hosted link shortener
 slug: link-shortener
 kind: greenfield
-status: ready
+status: published
 builds-on: []
 updated: 2026-10-25
 ---

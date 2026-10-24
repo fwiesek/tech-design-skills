@@ -24,7 +24,7 @@ Designs are Markdown with Mermaid diagrams, living in the repo they describe. Tw
 - **Working design** (`docs/design/<slug>/`): one folder per goal, with a backlog of open questions and risks, ADRs, and an iteration log, so a new session picks up where the last one stopped.
 - **Published docs** (`docs/architecture/`): generated from the working design, never edited by hand.
 
-The full rules (layout, sections, statuses, readiness checks, diagram style) are in [`conventions/CONVENTIONS.md`](conventions/CONVENTIONS.md). For a worked example, see [`examples/link-shortener/`](examples/link-shortener/).
+The full rules (layout, sections, statuses, readiness checks, diagram style) are in [`conventions/CONVENTIONS.md`](conventions/CONVENTIONS.md). For a worked example (start, four refines, two reviews, publish), see [`examples/link-shortener/`](examples/link-shortener/).
 
 ## Install
 
@@ -55,4 +55,4 @@ scripts/sync-conventions.sh          # copy into every skill
 scripts/sync-conventions.sh --check  # fail if any copy has drifted
 ```
 
-`examples/link-shortener/` was produced by running the skills, and serves as the regression fixture. When you change a skill, re-run it on the example and review the diff.
+`examples/link-shortener/` was produced by running the skills, and serves as the regression fixture. When you change a skill, re-run it on the example and review the diff. To check diagrams, render them all: `npx -p @mermaid-js/mermaid-cli mmdc -i <file> -o /tmp/out.md`.
