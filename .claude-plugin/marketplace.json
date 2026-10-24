@@ -1,0 +1,16 @@
+{
+  "name": "tech-design-skills",
+  "owner": {
+    "name": "Florian Wiesek"
+  },
+  "description": "Skills for iterative technical architecture design and documentation.",
+  "plugins": [
+    {
+      "name": "tech-design",
+      "source": "./",
+      "description": "Start a small base design from a goal, refine it one area at a time, review it, and publish architecture docs.",
+      "category": "engineering",
+      "keywords": ["architecture", "design", "adr", "documentation"]
+    }
+  ]
+}
