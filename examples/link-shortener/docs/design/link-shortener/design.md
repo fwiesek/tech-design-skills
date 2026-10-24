@@ -218,9 +218,14 @@ sequenceDiagram
 - [x] **Q2** (blocking) How do team members authenticate to the UI and API? — _area: auth_ — settled in ADR 0005
 - [x] **Q3** (major) 301 or 302 redirect? — _area: analytics_ — settled in ADR 0002
 - [x] **Q4** (major) What visitor data is stored, and for how long? — _area: analytics_ — settled in ADR 0004
-- [ ] **Q5** (minor) How is the SQLite file backed up? — _area: ops_
+- [ ] **Q5** (minor) How is the SQLite file backed up? Tracked by R3. — _area: ops_
 - [ ] **Q6** (minor) Should members be able to choose custom codes? If so, they must not collide with `api`, `admin` or `login`. — _area: links_
-- [ ] **Q7** (minor) Can links be disabled or expire, and what does a visitor see for an unknown or disabled code? — _area: links_
+- [ ] **Q7** (major) Can links be disabled or expire, and what does a visitor see for an unknown or disabled code? Access control already assumes abusive links can be disabled. — _area: links_
 - [ ] **Q8** (minor) How is the GeoLite2 file kept up to date (MaxMind licence key, refresh schedule)? — _area: ops_
 - [x] **R1** (major) Bots and link-preview crawlers inflate click counts. — _area: analytics_ — mitigation: clicks flagged `is_bot` and excluded from stats by default (areas/analytics.md)
+- [ ] **Q9** (blocking) Success criterion 4 is unproven: no section describes the Compose services, volumes, config and secrets that make `docker compose up` work. — _area: ops_
+- [ ] **Q10** (minor) The Database component row says "Links and clicks", but it also holds members, sessions, tokens and rollups. — _area: ops_
+- [ ] **Q11** (minor) If the App is down at rollup time, that day is never rolled up and its raw clicks expire at 90 days. — _area: analytics_
+- [ ] **Q12** (minor) What gets stored as the country when the GeoIP lookup fails (private IP, missing file)? — _area: analytics_
 - [x] **R2** (major) The shortener is abused to disguise phishing or malware links. — _area: auth_ — mitigation: members-only creation, http(s) targets only, creator recorded per link (Access control)
+- [ ] **R3** (major) Losing the VPS disk loses every link and all analytics history: there's no backup. — _area: ops_ — mitigation: none yet
