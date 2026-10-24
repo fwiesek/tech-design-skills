@@ -86,7 +86,7 @@ flowchart LR
 | --- | --- | --- |
 | Reverse proxy | TLS termination, HTTP→HTTPS, forwards everything to the app | Caddy |
 | App | Redirects (from an in-memory link cache), link CRUD API, analytics API, member auth, click buffer, nightly rollup job, serves the admin UI, member CLI | Node.js, Hono |
-| Admin UI | Create/edit links, view analytics | Static SPA served by the app |
+| Admin UI | Create, edit, disable and re-enable links; view analytics | Static SPA served by the app |
 | Database | Members, sessions, API tokens, links, clicks and daily rollups | SQLite file (WAL) on the `app_data` volume |
 | GeoLite2 file | IP-to-country lookups; the App reloads it when its mtime changes (checked hourly) | MaxMind mmdb on the `app_data` volume |
 | GeoIP updater | Refreshes the GeoLite2 file weekly | `maxmind/geoipupdate` container |
@@ -121,6 +121,8 @@ erDiagram
     text target_url
     integer created_by FK
     datetime created_at
+    datetime expires_at
+    datetime disabled_at
   }
   CLICK {
     integer id PK
@@ -145,7 +147,7 @@ erDiagram
 | Member | App | SQLite | Handful of rows; argon2id hash; created via CLI |
 | Session | App | SQLite | Opaque ID, stored hashed; 30-day sliding expiry |
 | API token | App | SQLite | Shown once, stored as SHA-256 hash |
-| Link | App | SQLite | ~1k rows; `code` is 7 random base62 chars; cached in App memory |
+| Link | App | SQLite | ~1k rows; generated or custom `code`; optional `expires_at`; `disabled_at` set by a member; cached in App memory |
 | Click | App | SQLite | Raw events, ~100k/month, kept 90 days; no IP or user agent stored |
 | Click daily | App | SQLite | Per-day aggregates, kept indefinitely |
 
@@ -173,7 +175,7 @@ sequenceDiagram
 
 ### Follow a link
 
-Proves: redirect p95 < 50 ms. The click write happens off the redirect path ([analytics](areas/analytics.md#click-capture)).
+Proves: redirect p95 < 50 ms. The click write happens off the redirect path ([analytics](areas/analytics.md#click-capture)). Clicks are recorded only for active links.
 
 ```mermaid
 sequenceDiagram
@@ -183,9 +185,15 @@ sequenceDiagram
   participant DB as Database
   Visitor->>App: GET /{code}
   App->>App: target from link cache
-  App->>Geo: country for IP
-  App->>App: push click to buffer
-  App-->>Visitor: 302 Location: target_url
+  alt unknown code
+    App-->>Visitor: 404 page
+  else disabled or expired
+    App-->>Visitor: 410 "link no longer available" page
+  else active
+    App->>Geo: country for IP
+    App->>App: push click to buffer
+    App-->>Visitor: 302 Location: target_url
+  end
   App->>DB: flush buffered clicks (every 1 s / 200 events)
 ```
 
@@ -243,6 +251,8 @@ One `docker-compose.yml` on the VPS. `docker compose up -d` brings up the whole 
 | 8 | Member auth | Built-in accounts, session cookies for the UI, hashed API tokens for scripts | [0005](decisions/0005-built-in-accounts.md) |
 | 9 | Backups | Litestream replication to a free-tier S3-compatible bucket | [0006](decisions/0006-litestream-backups.md) |
 | 10 | GeoIP refresh | `geoipupdate` sidecar weekly; App hot-reloads the file | — |
+| 11 | Custom codes | Optional, 3–32 chars of `a-z0-9-`, unique with generated codes; `api`, `admin`, `login`, `healthz` reserved | — |
+| 12 | Link lifecycle | Optional expiry; members can disable/re-enable; unknown → 404, disabled/expired → 410, no click recorded | — |
 
 ## Open questions and risks
 
@@ -251,8 +261,8 @@ One `docker-compose.yml` on the VPS. `docker compose up -d` brings up the whole 
 - [x] **Q3** (major) 301 or 302 redirect? — _area: analytics_ — settled in ADR 0002
 - [x] **Q4** (major) What visitor data is stored, and for how long? — _area: analytics_ — settled in ADR 0004
 - [x] **Q5** (minor) How is the SQLite file backed up? — _area: ops_ — settled in ADR 0006
-- [ ] **Q6** (minor) Should members be able to choose custom codes? If so, they must not collide with `api`, `admin` or `login`. — _area: links_
-- [ ] **Q7** (major) Can links be disabled or expire, and what does a visitor see for an unknown or disabled code? Access control already assumes abusive links can be disabled. — _area: links_
+- [x] **Q6** (minor) Should members be able to choose custom codes? — _area: links_ — settled in Decisions row 11
+- [x] **Q7** (major) Can links be disabled or expire, and what does a visitor see? — _area: links_ — settled in Decisions row 12 and Follow a link
 - [x] **Q8** (minor) How is the GeoLite2 file kept up to date? — _area: ops_ — settled in Deployment (Decisions row 10)
 - [x] **R1** (major) Bots and link-preview crawlers inflate click counts. — _area: analytics_ — mitigation: clicks flagged `is_bot` and excluded from stats by default (areas/analytics.md)
 - [x] **Q9** (blocking) Success criterion 4 is unproven: no deployment description. — _area: ops_ — settled in Deployment

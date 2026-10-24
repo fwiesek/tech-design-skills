@@ -23,3 +23,9 @@
 - **Changed:** Context (MaxMind downloads, backup bucket); Components (GeoLite2 file, GeoIP updater, Backup replicator; Database row); new Deployment section; Follow a link participant renamed
 - **Decided:** ADR 0006; Decisions rows 9–10
 - **New open items:** R4
+
+## 4. 2026-10-25 — links
+
+- **Changed:** Data (Link expires_at, disabled_at); Follow a link flow (404/410 branches); Admin UI row
+- **Decided:** Decisions rows 11–12
+- **New open items:** none
