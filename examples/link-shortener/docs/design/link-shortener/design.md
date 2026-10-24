@@ -36,18 +36,21 @@ Success criteria:
 flowchart LR
   member([Team member])
   visitor([Visitor])
-  geo[[GeoLite2 database]]
+  maxmind[[MaxMind GeoLite2 downloads]]
+  bucket[[Backup bucket<br/>S3-compatible]]
   subgraph sys [Link shortener]
     app[Link shortener]
   end
   member -->|"manages links, reads analytics · HTTPS"| app
   visitor -->|"opens short link · HTTPS"| app
-  app -->|"looks up country · local file"| geo
+  app -->|"fetches country database weekly · HTTPS"| maxmind
+  app -->|"replicates database · S3 API"| bucket
 ```
 
 - **Team member**: creates and manages links, reads analytics.
 - **Visitor**: anyone opening a short link; never logs in.
-- **GeoLite2 database**: MaxMind's free IP-to-country file, read locally, so no visitor data leaves the server.
+- **MaxMind GeoLite2 downloads**: free IP-to-country database, fetched weekly and read locally, so no visitor data leaves the server.
+- **Backup bucket**: off-host copy of the database (ADR 0006); only used for backup and restore.
 
 ## Components
 
@@ -55,12 +58,16 @@ flowchart LR
 flowchart LR
   member([Team member])
   visitor([Visitor])
-  geo[[GeoLite2 database]]
+  maxmind[[MaxMind GeoLite2 downloads]]
+  bucket[[Backup bucket]]
   subgraph sys [Link shortener]
     proxy[Reverse proxy<br/>Caddy]
     app[App<br/>Node.js · Hono]
     ui[Admin UI<br/>static SPA]
     db[(Database<br/>SQLite)]
+    mmdb[(GeoLite2 file<br/>mmdb)]
+    geoip[GeoIP updater<br/>geoipupdate]
+    backup[Backup replicator<br/>Litestream]
   end
   member -->|"loads UI · HTTPS"| proxy
   visitor -->|"GET /code · HTTPS"| proxy
@@ -68,7 +75,11 @@ flowchart LR
   app -->|"serves · HTTP"| ui
   ui -->|"calls API · HTTPS/JSON"| proxy
   app -->|"reads/writes · SQL"| db
-  app -->|"country lookup · mmdb"| geo
+  app -->|"country lookup · mmdb"| mmdb
+  geoip -->|"downloads weekly · HTTPS"| maxmind
+  geoip -->|"replaces file"| mmdb
+  backup -->|"tails WAL · file"| db
+  backup -->|"replicates · S3 API"| bucket
 ```
 
 | Component | Responsibility | Tech |
@@ -76,7 +87,10 @@ flowchart LR
 | Reverse proxy | TLS termination, HTTP→HTTPS, forwards everything to the app | Caddy |
 | App | Redirects (from an in-memory link cache), link CRUD API, analytics API, member auth, click buffer, nightly rollup job, serves the admin UI, member CLI | Node.js, Hono |
 | Admin UI | Create/edit links, view analytics | Static SPA served by the app |
-| Database | Links and clicks | SQLite file on a Docker volume |
+| Database | Members, sessions, API tokens, links, clicks and daily rollups | SQLite file (WAL) on the `app_data` volume |
+| GeoLite2 file | IP-to-country lookups; the App reloads it when its mtime changes (checked hourly) | MaxMind mmdb on the `app_data` volume |
+| GeoIP updater | Refreshes the GeoLite2 file weekly | `maxmind/geoipupdate` container |
+| Backup replicator | Continuous off-host replication of the database | Litestream container |
 
 ## Data
 
@@ -165,7 +179,7 @@ Proves: redirect p95 < 50 ms. The click write happens off the redirect path ([an
 sequenceDiagram
   actor Visitor
   participant App
-  participant Geo as GeoLite2 database
+  participant Geo as GeoLite2 file
   participant DB as Database
   Visitor->>App: GET /{code}
   App->>App: target from link cache
@@ -191,6 +205,22 @@ sequenceDiagram
   App-->>UI: stats JSON
 ```
 
+## Deployment
+
+One `docker-compose.yml` on the VPS. `docker compose up -d` brings up the whole system.
+
+| Service | Image | Volumes | Notes |
+| --- | --- | --- | --- |
+| `caddy` | `caddy:2` | `caddy_data` (certs) | Ports 80/443; automatic TLS for `BASE_URL` |
+| `app` | built from this repo | `app_data:/data` | Healthcheck `GET /healthz`; `restart: unless-stopped` |
+| `geoipupdate` | `maxmind/geoipupdate` | `app_data:/data` | `GEOIPUPDATE_FREQUENCY=168` (weekly) |
+| `litestream` | `litestream/litestream` | `app_data:/data` | `replicate /data/shortener.db` to the bucket |
+
+- **Config and secrets** live in a `.env` file next to the compose file and are never committed: `BASE_URL`, `MAXMIND_ACCOUNT_ID`, `MAXMIND_LICENSE_KEY`, `LITESTREAM_ACCESS_KEY_ID`, `LITESTREAM_SECRET_ACCESS_KEY`, `LITESTREAM_BUCKET`.
+- **First boot:** the App starts without a GeoLite2 file and stores country `unknown` until the first download lands.
+- **Restore:** stop `app`, run `litestream restore -o /data/shortener.db <bucket path>` in a one-off container, then start `app`.
+- **Upgrade:** `docker compose pull && docker compose up -d app`. Schema migrations run at App start, inside a transaction.
+
 ## Access control
 
 - **Public:** `GET /{code}` only. Everything under `/api/*` and `/admin/*` needs a member session cookie or an API token. See [ADR 0005](decisions/0005-built-in-accounts.md).
@@ -211,6 +241,8 @@ sequenceDiagram
 | 6 | Click write path | In-memory buffer, batch flush; up to ~1 s of clicks lost on crash | [0003](decisions/0003-buffer-click-writes.md) |
 | 7 | Visitor data | No IP/UA stored; raw clicks 90 days, daily rollups forever | [0004](decisions/0004-click-retention.md) |
 | 8 | Member auth | Built-in accounts, session cookies for the UI, hashed API tokens for scripts | [0005](decisions/0005-built-in-accounts.md) |
+| 9 | Backups | Litestream replication to a free-tier S3-compatible bucket | [0006](decisions/0006-litestream-backups.md) |
+| 10 | GeoIP refresh | `geoipupdate` sidecar weekly; App hot-reloads the file | — |
 
 ## Open questions and risks
 
@@ -218,14 +250,15 @@ sequenceDiagram
 - [x] **Q2** (blocking) How do team members authenticate to the UI and API? — _area: auth_ — settled in ADR 0005
 - [x] **Q3** (major) 301 or 302 redirect? — _area: analytics_ — settled in ADR 0002
 - [x] **Q4** (major) What visitor data is stored, and for how long? — _area: analytics_ — settled in ADR 0004
-- [ ] **Q5** (minor) How is the SQLite file backed up? Tracked by R3. — _area: ops_
+- [x] **Q5** (minor) How is the SQLite file backed up? — _area: ops_ — settled in ADR 0006
 - [ ] **Q6** (minor) Should members be able to choose custom codes? If so, they must not collide with `api`, `admin` or `login`. — _area: links_
 - [ ] **Q7** (major) Can links be disabled or expire, and what does a visitor see for an unknown or disabled code? Access control already assumes abusive links can be disabled. — _area: links_
-- [ ] **Q8** (minor) How is the GeoLite2 file kept up to date (MaxMind licence key, refresh schedule)? — _area: ops_
+- [x] **Q8** (minor) How is the GeoLite2 file kept up to date? — _area: ops_ — settled in Deployment (Decisions row 10)
 - [x] **R1** (major) Bots and link-preview crawlers inflate click counts. — _area: analytics_ — mitigation: clicks flagged `is_bot` and excluded from stats by default (areas/analytics.md)
-- [ ] **Q9** (blocking) Success criterion 4 is unproven: no section describes the Compose services, volumes, config and secrets that make `docker compose up` work. — _area: ops_
-- [ ] **Q10** (minor) The Database component row says "Links and clicks", but it also holds members, sessions, tokens and rollups. — _area: ops_
+- [x] **Q9** (blocking) Success criterion 4 is unproven: no deployment description. — _area: ops_ — settled in Deployment
+- [x] **Q10** (minor) Database component row is stale. — _area: ops_ — settled in Components
 - [ ] **Q11** (minor) If the App is down at rollup time, that day is never rolled up and its raw clicks expire at 90 days. — _area: analytics_
 - [ ] **Q12** (minor) What gets stored as the country when the GeoIP lookup fails (private IP, missing file)? — _area: analytics_
 - [x] **R2** (major) The shortener is abused to disguise phishing or malware links. — _area: auth_ — mitigation: members-only creation, http(s) targets only, creator recorded per link (Access control)
-- [ ] **R3** (major) Losing the VPS disk loses every link and all analytics history: there's no backup. — _area: ops_ — mitigation: none yet
+- [x] **R3** (major) Losing the VPS disk loses every link and all analytics history. — _area: ops_ — mitigation: Litestream off-host replication, RPO ~1 s (ADR 0006)
+- [ ] **R4** (minor) The restore procedure is never exercised, so it may not work when needed. — _area: ops_ — mitigation: none yet

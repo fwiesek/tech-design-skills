@@ -17,3 +17,9 @@
 - **Changed:** new Access control section; Data (Member, Session, API token, Link.created_by); Create a link flow; App component row
 - **Decided:** ADR 0005; Decisions row 8
 - **New open items:** none (Q6 extended with reserved paths)
+
+## 3. 2026-10-25 — ops
+
+- **Changed:** Context (MaxMind downloads, backup bucket); Components (GeoLite2 file, GeoIP updater, Backup replicator; Database row); new Deployment section; Follow a link participant renamed
+- **Decided:** ADR 0006; Decisions rows 9–10
+- **New open items:** R4
