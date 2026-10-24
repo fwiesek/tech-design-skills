@@ -2,7 +2,7 @@
 title: Self-hosted link shortener
 slug: link-shortener
 kind: greenfield
-status: draft
+status: refining
 builds-on: []
 updated: 2026-10-25
 ---
@@ -74,7 +74,7 @@ flowchart LR
 | Component | Responsibility | Tech |
 | --- | --- | --- |
 | Reverse proxy | TLS termination, HTTP→HTTPS, forwards everything to the app | Caddy |
-| App | Redirects, link CRUD API, analytics API, serves the admin UI | Node.js, Hono |
+| App | Redirects (from an in-memory link cache), link CRUD API, analytics API, click buffer, nightly rollup job, serves the admin UI | Node.js, Hono |
 | Admin UI | Create/edit links, view analytics | Static SPA served by the app |
 | Database | Links and clicks | SQLite file on a Docker volume |
 
@@ -83,6 +83,7 @@ flowchart LR
 ```mermaid
 erDiagram
   LINK ||--o{ CLICK : receives
+  LINK ||--o{ CLICK_DAILY : "rolled up into"
   LINK {
     text code PK
     text target_url
@@ -92,15 +93,27 @@ erDiagram
     integer id PK
     text code FK
     datetime at
-    text referrer
+    text referrer_host
     text country
+    boolean is_bot
+  }
+  CLICK_DAILY {
+    text code PK
+    date day PK
+    text referrer_host PK
+    text country PK
+    boolean is_bot PK
+    integer count
   }
 ```
 
 | Entity | Owner | Store | Notes |
 | --- | --- | --- | --- |
-| Link | App | SQLite | ~1k rows; `code` is 7 random base62 chars |
-| Click | App | SQLite | ~100k rows/month; retention not yet decided |
+| Link | App | SQLite | ~1k rows; `code` is 7 random base62 chars; cached in App memory |
+| Click | App | SQLite | Raw events, ~100k/month, kept 90 days; no IP or user agent stored |
+| Click daily | App | SQLite | Per-day aggregates, kept indefinitely |
+
+Capture, retention and query detail: [areas/analytics.md](areas/analytics.md).
 
 ## Key flows
 
@@ -123,19 +136,20 @@ sequenceDiagram
 
 ### Follow a link
 
-Proves: redirect p95 < 50 ms.
+Proves: redirect p95 < 50 ms. The click write happens off the redirect path ([analytics](areas/analytics.md#click-capture)).
 
 ```mermaid
 sequenceDiagram
   actor Visitor
   participant App
-  participant DB as Database
   participant Geo as GeoLite2 database
+  participant DB as Database
   Visitor->>App: GET /{code}
-  App->>DB: SELECT target_url
+  App->>App: target from link cache
   App->>Geo: country for IP
-  App->>DB: INSERT click
-  App-->>Visitor: redirect to target_url
+  App->>App: push click to buffer
+  App-->>Visitor: 302 Location: target_url
+  App->>DB: flush buffered clicks (every 1 s / 200 events)
 ```
 
 ### View analytics
@@ -150,7 +164,7 @@ sequenceDiagram
   participant DB as Database
   Member->>UI: open link stats
   UI->>App: GET /api/links/{code}/stats
-  App->>DB: GROUP BY day / referrer / country
+  App->>DB: CLICK_DAILY for past days + CLICK for today, bots excluded
   App-->>UI: stats JSON
 ```
 
@@ -162,14 +176,19 @@ sequenceDiagram
 | 2 | Code format | 7 random base62 chars, retry on collision (3.5 × 10¹² space vs ~1k links) | — |
 | 3 | Process layout | One app process serves redirects, API and UI; split only if the redirect path needs it | — |
 | 4 | Geo lookup | Local GeoLite2 file, keeps visitor IPs on the server | — |
+| 5 | Redirect status | 302, not cacheable, so every click is counted | [0002](decisions/0002-redirect-with-302.md) |
+| 6 | Click write path | In-memory buffer, batch flush; up to ~1 s of clicks lost on crash | [0003](decisions/0003-buffer-click-writes.md) |
+| 7 | Visitor data | No IP/UA stored; raw clicks 90 days, daily rollups forever | [0004](decisions/0004-click-retention.md) |
 
 ## Open questions and risks
 
-- [ ] **Q1** (blocking) How are clicks recorded without slowing the redirect? The v0 flow inserts synchronously. — _area: analytics_
+- [x] **Q1** (blocking) How are clicks recorded without slowing the redirect? — _area: analytics_ — settled in ADR 0003
 - [ ] **Q2** (blocking) How do team members authenticate to the UI and API? — _area: auth_
-- [ ] **Q3** (major) 301 or 302 redirect? A cached 301 hides repeat clicks from analytics. — _area: analytics_
-- [ ] **Q4** (major) What visitor data is stored, and for how long (IP, user agent, raw clicks vs aggregates)? — _area: analytics_
+- [x] **Q3** (major) 301 or 302 redirect? — _area: analytics_ — settled in ADR 0002
+- [x] **Q4** (major) What visitor data is stored, and for how long? — _area: analytics_ — settled in ADR 0004
 - [ ] **Q5** (minor) How is the SQLite file backed up? — _area: ops_
 - [ ] **Q6** (minor) Should members be able to choose custom codes? — _area: links_
-- [ ] **R1** (major) Bots and link-preview crawlers inflate click counts. — _area: analytics_ — mitigation: none yet
+- [ ] **Q7** (minor) Can links be disabled or expire, and what does a visitor see for an unknown or disabled code? — _area: links_
+- [ ] **Q8** (minor) How is the GeoLite2 file kept up to date (MaxMind licence key, refresh schedule)? — _area: ops_
+- [x] **R1** (major) Bots and link-preview crawlers inflate click counts. — _area: analytics_ — mitigation: clicks flagged `is_bot` and excluded from stats by default (areas/analytics.md)
 - [ ] **R2** (major) The shortener is abused to disguise phishing or malware links. — _area: auth_ — mitigation: none yet

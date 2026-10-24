@@ -5,3 +5,9 @@
 - **Changed:** created design.md (all sections)
 - **Decided:** ADR 0001; Decisions rows 2–4
 - **New open items:** Q1–Q6, R1–R2
+
+## 1. 2026-10-25 — analytics
+
+- **Changed:** Data (new fields, CLICK_DAILY), Follow a link and View analytics flows, Components (link cache, click buffer, rollup job in App); detail moved to areas/analytics.md
+- **Decided:** ADRs 0002, 0003, 0004; Decisions row 5
+- **New open items:** Q7, Q8
