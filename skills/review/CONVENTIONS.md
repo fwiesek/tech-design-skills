@@ -61,7 +61,7 @@ Fixed order. Each section stays thin: the whole file aims for 1–2 pages.
 9. **Decisions**: table of `# | Decision | Choice | ADR`.
 10. **Open questions and risks**: the refinement backlog (format below).
 
-Infra/deployment and module-level detail enter only when a refinement asks for them, as an extra section after Key flows or as an area doc.
+Cross-cutting topics (access control, deployment, observability, module-level detail) enter only when a refinement settles them, as extra sections between Key flows and Migration / delta, or as area docs.
 
 ## Open questions and risks
 

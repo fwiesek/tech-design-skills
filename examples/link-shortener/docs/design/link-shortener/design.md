@@ -74,7 +74,7 @@ flowchart LR
 | Component | Responsibility | Tech |
 | --- | --- | --- |
 | Reverse proxy | TLS termination, HTTP→HTTPS, forwards everything to the app | Caddy |
-| App | Redirects (from an in-memory link cache), link CRUD API, analytics API, click buffer, nightly rollup job, serves the admin UI | Node.js, Hono |
+| App | Redirects (from an in-memory link cache), link CRUD API, analytics API, member auth, click buffer, nightly rollup job, serves the admin UI, member CLI | Node.js, Hono |
 | Admin UI | Create/edit links, view analytics | Static SPA served by the app |
 | Database | Links and clicks | SQLite file on a Docker volume |
 
@@ -82,11 +82,30 @@ flowchart LR
 
 ```mermaid
 erDiagram
+  MEMBER ||--o{ LINK : creates
+  MEMBER ||--o{ SESSION : has
+  MEMBER ||--o{ API_TOKEN : has
   LINK ||--o{ CLICK : receives
   LINK ||--o{ CLICK_DAILY : "rolled up into"
+  MEMBER {
+    integer id PK
+    text email
+    text password_hash
+  }
+  SESSION {
+    text id_hash PK
+    integer member_id FK
+    datetime expires_at
+  }
+  API_TOKEN {
+    text token_hash PK
+    integer member_id FK
+    text label
+  }
   LINK {
     text code PK
     text target_url
+    integer created_by FK
     datetime created_at
   }
   CLICK {
@@ -109,6 +128,9 @@ erDiagram
 
 | Entity | Owner | Store | Notes |
 | --- | --- | --- | --- |
+| Member | App | SQLite | Handful of rows; argon2id hash; created via CLI |
+| Session | App | SQLite | Opaque ID, stored hashed; 30-day sliding expiry |
+| API token | App | SQLite | Shown once, stored as SHA-256 hash |
 | Link | App | SQLite | ~1k rows; `code` is 7 random base62 chars; cached in App memory |
 | Click | App | SQLite | Raw events, ~100k/month, kept 90 days; no IP or user agent stored |
 | Click daily | App | SQLite | Per-day aggregates, kept indefinitely |
@@ -128,8 +150,9 @@ sequenceDiagram
   participant App
   participant DB as Database
   Member->>UI: paste long URL
-  UI->>App: POST /api/links {target_url}
-  App->>App: generate code
+  UI->>App: POST /api/links {target_url} + session cookie
+  App->>DB: look up session
+  App->>App: validate target is http(s), generate code
   App->>DB: INSERT link
   App-->>UI: 201 {code, short_url}
 ```
@@ -168,6 +191,14 @@ sequenceDiagram
   App-->>UI: stats JSON
 ```
 
+## Access control
+
+- **Public:** `GET /{code}` only. Everything under `/api/*` and `/admin/*` needs a member session cookie or an API token. See [ADR 0005](decisions/0005-built-in-accounts.md).
+- **Members** are added, removed and reset with `app member add|remove|reset <email>`. There's no sign-up, so link creation is never open to the public.
+- **Mutating API calls** need `Content-Type: application/json`. Combined with `SameSite=Lax` cookies, this blocks cross-site form posts.
+- **Targets** must be `http` or `https` URLs. Every link records its creator, so abuse can be traced and the link disabled.
+- **Login** is limited to 5 failures per 15 min per email and IP, tracked in App memory.
+
 ## Decisions
 
 | # | Decision | Choice | ADR |
@@ -179,16 +210,17 @@ sequenceDiagram
 | 5 | Redirect status | 302, not cacheable, so every click is counted | [0002](decisions/0002-redirect-with-302.md) |
 | 6 | Click write path | In-memory buffer, batch flush; up to ~1 s of clicks lost on crash | [0003](decisions/0003-buffer-click-writes.md) |
 | 7 | Visitor data | No IP/UA stored; raw clicks 90 days, daily rollups forever | [0004](decisions/0004-click-retention.md) |
+| 8 | Member auth | Built-in accounts, session cookies for the UI, hashed API tokens for scripts | [0005](decisions/0005-built-in-accounts.md) |
 
 ## Open questions and risks
 
 - [x] **Q1** (blocking) How are clicks recorded without slowing the redirect? — _area: analytics_ — settled in ADR 0003
-- [ ] **Q2** (blocking) How do team members authenticate to the UI and API? — _area: auth_
+- [x] **Q2** (blocking) How do team members authenticate to the UI and API? — _area: auth_ — settled in ADR 0005
 - [x] **Q3** (major) 301 or 302 redirect? — _area: analytics_ — settled in ADR 0002
 - [x] **Q4** (major) What visitor data is stored, and for how long? — _area: analytics_ — settled in ADR 0004
 - [ ] **Q5** (minor) How is the SQLite file backed up? — _area: ops_
-- [ ] **Q6** (minor) Should members be able to choose custom codes? — _area: links_
+- [ ] **Q6** (minor) Should members be able to choose custom codes? If so, they must not collide with `api`, `admin` or `login`. — _area: links_
 - [ ] **Q7** (minor) Can links be disabled or expire, and what does a visitor see for an unknown or disabled code? — _area: links_
 - [ ] **Q8** (minor) How is the GeoLite2 file kept up to date (MaxMind licence key, refresh schedule)? — _area: ops_
 - [x] **R1** (major) Bots and link-preview crawlers inflate click counts. — _area: analytics_ — mitigation: clicks flagged `is_bot` and excluded from stats by default (areas/analytics.md)
-- [ ] **R2** (major) The shortener is abused to disguise phishing or malware links. — _area: auth_ — mitigation: none yet
+- [x] **R2** (major) The shortener is abused to disguise phishing or malware links. — _area: auth_ — mitigation: members-only creation, http(s) targets only, creator recorded per link (Access control)
