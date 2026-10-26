@@ -1,0 +1,16 @@
+{
+  "name": "tech-design",
+  "version": "0.1.0",
+  "description": "Design technical architecture iteratively: start a small base design from a goal, refine it one area at a time, review it for readiness, and publish polished docs.",
+  "author": {
+    "name": "Florian Wiesek"
+  },
+  "license": "MIT",
+  "keywords": ["architecture", "design", "adr", "documentation", "c4", "skills"],
+  "skills": [
+    "./skills/start",
+    "./skills/refine",
+    "./skills/review",
+    "./skills/publish"
+  ]
+}
